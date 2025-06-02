@@ -6,7 +6,8 @@ import (
 	"github.com/gorilla/mux"
 )
  
-func Login(w http.ResponseWriter, r *http.Request){
+func Login() func( http.ResponseWriter, *http.Request){
+	return func(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	user := r.FormValue("user")
 	password := r.FormValue("password")
@@ -16,6 +17,7 @@ func Login(w http.ResponseWriter, r *http.Request){
 	} else {
 	fmt.Fprintf(w,"Nuh Uh")
 	}
+	}
 }
 
 func admin(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +26,7 @@ func admin(w http.ResponseWriter, r *http.Request) {
 func main() {
 	r := mux.NewRouter()
 
-	r.HandleFunc("/login",Login).Methods("POST")
+	r.HandleFunc("/login",Login()).Methods("POST")
 
 	r.HandleFunc("/admin",admin).Methods("GET")
 	http.ListenAndServe(":8080",r)
