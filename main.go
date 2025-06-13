@@ -7,45 +7,110 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"database/sql"
-	"crypto/sha256"
+	"golang.org/x/crypto/bcrypt"
+	"encoding/base64"
 )
- 
-func Login(db *sql.DB) func( http.ResponseWriter, *http.Request){
-	return func(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	user := r.FormValue("user")
-	password := r.FormValue("password")
-	h := sha256.New()
-	h.Write([]byte(password))
-	hashed_password := h.Sum(nil)
-	var row int
-	err := db.QueryRow("SELECT EXISTS(SELECT 1 from users where password = ? AND name = ?)",hashed_password,user).Scan(&row)
-	if err != nil {
-		log.Printf("Erro ao selecionar usuário na tabela")
-		log.Fatal(err)
-	} 
-	if row == 1 {
-		log.Printf("deu certo")
-	} else {
-		log.Printf("deu errado")
-	}
-	
-  }
+
+const bcryptCost = 12
+
+func HashPassword(password string) (string, error) {
+    bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+    return string(bytes), err
 }
 
-func CreateUser(db *sql.DB) func(http.ResponseWriter, *http.Request){
-	return func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
-		user := r.FormValue("user")
-		password := r.FormValue("Password")
-		h := sha256.New()
-		h.Write([]byte(password))
-		hashed_password :=  h.Sum(nil)
-		_, err := db.Exec("INSERT INTO users(name,password) VALUES (?,?)",user,hashed_password)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
+func Login(db *sql.DB) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+            http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
+            return
+        }
+
+        if err := r.ParseForm(); err != nil {
+            http.Error(w, "Requisição mal‑formada", http.StatusBadRequest)
+            return
+        }
+        user := r.FormValue("user")
+        pass := r.FormValue("password")
+        if user == "" || pass == "" {
+            http.Error(w, "Usuário e senha são obrigatórios", http.StatusBadRequest)
+            return
+        }
+
+        var storedHash string
+        if err := db.QueryRow(`SELECT password FROM users WHERE name = ?`, user).Scan(&storedHash); err != nil {
+            if err == sql.ErrNoRows {
+                http.Error(w, "Usuário ou senha inválidos", http.StatusUnauthorized)
+                return
+            }
+            log.Printf("db error: %v", err)
+            http.Error(w, "Erro interno", http.StatusInternalServerError)
+            return
+        }
+        if err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(pass)); err != nil {
+            http.Error(w, "Usuário ou senha inválidos", http.StatusUnauthorized)
+            return
+        }
+
+        raw := user + "|" + storedHash
+        token := base64.StdEncoding.EncodeToString([]byte(raw))
+
+        http.SetCookie(w, &http.Cookie{
+            Name:     "fintrack_session",
+            Value:    token,
+            Path:     "/",                     // enviado em todas as rotas
+            MaxAge:   3600,                    // 1 h
+            HttpOnly: true,                    // JavaScript não acessa
+            Secure:   true,                    // só via HTTPS em prod
+            SameSite: http.SameSiteStrictMode, // CSRF
+        })
+
+        w.Header().Set("Content-Type", "application/json")
+        fmt.Fprintf(w, `{"session":"%s"}`, token)
+    }
+}
+
+// CreateUser registra um novo usuário com verificação básica.
+func CreateUser(db *sql.DB) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+            http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
+            return
+        }
+
+        if err := r.ParseForm(); err != nil {
+            http.Error(w, "Requisição mal‑formada", http.StatusBadRequest)
+            return
+        }
+        user := r.FormValue("user")
+        pass := r.FormValue("password")
+        if user == "" || pass == "" {
+            http.Error(w, "Usuário e senha são obrigatórios", http.StatusBadRequest)
+            return
+        }
+
+        // Checar se já existe
+        var exists int
+        if err := db.QueryRow(`SELECT 1 FROM users WHERE name = ?`, user).Scan(&exists); err == nil {
+            http.Error(w, "Usuário já existe", http.StatusConflict)
+            return
+        }
+
+        hash, err := HashPassword(pass)
+        if err != nil {
+            log.Printf("hash error: %v", err)
+            http.Error(w, "Erro interno", http.StatusInternalServerError)
+            return
+        }
+
+        if _, err := db.Exec(`INSERT INTO users(name, password) VALUES (?, ?)`, user, hash); err != nil {
+            log.Printf("insert error: %v", err)
+            http.Error(w, "Erro interno", http.StatusInternalServerError)
+            return
+        }
+
+        w.WriteHeader(http.StatusCreated)
+        fmt.Fprintln(w, "Usuário criado com sucesso")
+    }
 }
 
 
@@ -61,7 +126,7 @@ func InitDB() *sql.DB{
 	sqlStmt := `
     CREATE TABLE IF NOT EXISTS users (
         name TEXT NOT NULL PRIMARY KEY,
-        password TEXT
+        password TEXT NOT NULL
     );
     `
 
