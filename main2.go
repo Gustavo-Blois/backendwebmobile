@@ -30,7 +30,7 @@ func HashPassword(password string) (string, error) {
 // valida user | hash vindo do cookie
 func userMatches(db *sql.DB, user, hash string) bool {
     var stored string
-    if err := db.QueryRow(`SELECT password FROM users WHERE name = ?`, user).Scan(&stored); err != nil {
+    if err := db.QueryRow(`SELECT password FROM users WHERE email = ?`, user).Scan(&stored); err != nil {
         return false
     }
     return stored == hash // hash já veio do banco no login; comparação direta é suficiente
@@ -39,7 +39,7 @@ func userMatches(db *sql.DB, user, hash string) bool {
 func UserMatchesPassword(db *sql.DB, user string, pass string) bool{
 
     var storedHash string
-    if err := db.QueryRow(`SELECT password FROM users WHERE name = ?`, user).Scan(&storedHash); err != nil {
+    if err := db.QueryRow(`SELECT password FROM users WHERE email = ?`, user).Scan(&storedHash); err != nil {
             if err == sql.ErrNoRows {
                 return false
             }
@@ -73,8 +73,7 @@ func parseSessionCookie(r *http.Request) (user, hash string, ok bool) {
 // handlers
 // -----------------------------------------------------------------------------
 
-// Retorna as 10 transações mais recentes do usuário autenticado.
-func RetTransactions(db *sql.DB) http.HandlerFunc {
+func Transactions(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         user, hash, ok := parseSessionCookie(r)
         if !ok || !UserMatchesPassword(db, user, hash) {
@@ -87,7 +86,7 @@ func RetTransactions(db *sql.DB) http.HandlerFunc {
             FROM transactions 
             WHERE user = ? 
             ORDER BY date DESC 
-            LIMIT 10`, user)
+            `, user)
         if err != nil {
             log.Printf("query error: %v", err)
             http.Error(w, "Erro interno", http.StatusInternalServerError)
@@ -189,9 +188,10 @@ func Login(db *sql.DB) http.HandlerFunc {
             return
         }
         user := r.FormValue("user")
+        email := r.FormValue("email")
         pass := r.FormValue("password")
-        if user == "" || pass == "" {
-            http.Error(w, "Usuário e senha são obrigatórios", http.StatusBadRequest)
+        if user == "" || pass == "" || email == "" {
+            http.Error(w, "Usuário, senha e e-mail são obrigatórios", http.StatusBadRequest)
             return
         }
 
@@ -353,8 +353,7 @@ func main() {
 
 	r.HandleFunc("/login",Login(db)).Methods("POST")
 	r.HandleFunc("/cria_user",CreateUser(db)).Methods("POST")
-	r.HandleFunc("/transactionsret",RetTransactions(db)).Methods("POST")
-	r.HandleFunc("/transactionspost",PostTransactions(db)).Methods("POST")
+	r.HandleFunc("/transactions",Transactions(db)).Methods("POST", "GET")
 
 	http.ListenAndServe(":8080",r)
 	log.Println("Servidor em 127.0.0.1:8080")
