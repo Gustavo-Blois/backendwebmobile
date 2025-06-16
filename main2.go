@@ -326,7 +326,7 @@ func InitDB() *sql.DB{
 
 	sqlStmt = `
 	    CREATE TABLE IF NOT EXISTS transactions(
-	        id INTEGER AUTOINCREMENT,
+	        id INTEGER PRIMARY KEY AUTOINCREMENT,
 	        user TEXT NOT NULL,
 	        description TEXT NOT NULL,
 	        value INTEGER NOT NULL,
@@ -335,7 +335,6 @@ func InitDB() *sql.DB{
 	        date INTEGER NOT NULL,
 	        FOREIGN KEY(user) REFERENCES users(email),
 	        FOREIGN KEY(category) REFERENCES categories(name)
-	        PRIMARY KEY(user,id)
 	    )
 	`
 	_, err = db.Exec(sqlStmt)
